@@ -67,16 +67,15 @@ export const subscribers = pgTable(
 export type ProfileFacts = {
   injuries?: string[];
   equipment?: string[];
-  availability?: Record<string, string>;
-  preferences?: Record<string, string>;
-  [key: string]: unknown;
+  availability?: string[];
+  preferences?: string[];
+  other?: string[];
 };
 
 export type CurrentPlan = {
   focus?: string;
   progression?: string;
-  upcomingDays?: Array<{ day: number; theme: string; notes?: string }>;
-  [key: string]: unknown;
+  upcomingDays?: Array<{ day: number; theme: string; notes: string }>;
 };
 
 export const profiles = pgTable("profiles", {
@@ -163,8 +162,10 @@ export type EventType =
   | "reply_received"
   | "profile_updated"
   | "paused"
+  | "resumed"
   | "stopped"
   | "bounced"
+  | "safety_flagged"
   | "generation_failed"
   | "send_failed";
 

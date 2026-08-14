@@ -41,15 +41,15 @@ async function main() {
     facts: {
       injuries: ["left knee soreness on stairs"],
       equipment: ["yoga mat"],
-      availability: { weekdays: "20 minutes before work" },
-      preferences: { tone: "gentle", focus: "energy" },
+      availability: ["20 minutes before work on weekdays"],
+      preferences: ["gentle tone", "focus on energy, not weight loss"],
     },
     currentPlan: {
       focus: "build a daily movement habit without aggravating the knee",
       progression: "walking + bodyweight basics, add time before intensity",
       upcomingDays: [
         { day: 4, theme: "brisk walk + wall sits", notes: "knee-neutral" },
-        { day: 5, theme: "rest + gentle stretching" },
+        { day: 5, theme: "rest + gentle stretching", notes: "" },
       ],
     },
   });
