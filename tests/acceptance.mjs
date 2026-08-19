@@ -2,7 +2,7 @@
 // real Postgres, and the stub upstream in mock-upstream.mjs.
 //
 //   node tests/mock-upstream.mjs 3222 &
-//   RESEND_BASE_URL=... ANTHROPIC_BASE_URL=... npx next start -p 3111 &
+//   RESEND_BASE_URL=... OPENROUTER_BASE_URL=... npx next start -p 3111 &
 //   node tests/acceptance.mjs
 import postgres from "postgres";
 import { Webhook } from "svix";
@@ -23,8 +23,8 @@ function check(name, pass, detail = "") {
 }
 
 const outbox = () => fetch(`${MOCK}/__outbox`).then((r) => r.json());
-const aiCalls = () => fetch(`${MOCK}/__anthropic-calls`).then((r) => r.json());
-const setMode = (m) => fetch(`${MOCK}/__mode?anthropic=${m}`).then((r) => r.json());
+const aiCalls = () => fetch(`${MOCK}/__model-calls`).then((r) => r.json());
+const setMode = (m) => fetch(`${MOCK}/__mode?model=${m}`).then((r) => r.json());
 
 async function reset() {
   await sql`truncate subscribers, events restart identity cascade`;
@@ -73,10 +73,18 @@ async function inbound(fromEmail, text, inReplyTo = null) {
 }
 
 
-/** Post a server-action form the way a no-JS browser does. */
-async function actionPost(path, fields, extraHeaders = {}) {
+/**
+ * Post a server-action form the way a no-JS browser does. `match` picks one
+ * form out of a page that has several, by a string inside that form's markup.
+ */
+async function actionPost(path, fields, { headers = {}, match } = {}) {
+  const extraHeaders = headers;
   const html = await fetch(`${APP}${path}`, { headers: extraHeaders }).then((r) => r.text());
-  const actionId = /name="(\$ACTION_ID_[a-f0-9]+)"/.exec(html)?.[1];
+  const scope = match
+    ? (html.match(/<form[\s\S]*?<\/form>/g) ?? []).find((f) => f.includes(match))
+    : html;
+  if (!scope) throw new Error(`no form matching ${match} at ${path}`);
+  const actionId = /name="(\$ACTION_ID_[a-f0-9]+)"/.exec(scope)?.[1];
   if (!actionId) throw new Error(`no server-action id at ${path}`);
   const body = new FormData();
   body.set(actionId, "");
@@ -162,7 +170,9 @@ async function main() {
   );
 
   const dailyCall = (await aiCalls()).find((c) =>
-    Object.keys(c.output_config?.format?.schema?.properties ?? {}).includes("body"),
+    Object.keys(c.response_format?.json_schema?.schema?.properties ?? {}).includes(
+      "body",
+    ),
   );
   check(
     "the constraint reaches the writer's context (continuity)",
@@ -199,6 +209,47 @@ async function main() {
       (m) => m.headers?.["List-Unsubscribe"] && m.headers?.["List-Unsubscribe-Post"],
     ),
     `${afterReply.length} email(s)`,
+  );
+
+  // Model routing through OpenRouter: each job runs on its own configured
+  // model, and routing is pinned to providers that honour the JSON schema.
+  const calls = await aiCalls();
+  const schemaOf = (c) =>
+    Object.keys(c.response_format?.json_schema?.schema?.properties ?? {});
+  const writerCall = calls.find((c) => schemaOf(c).includes("body"));
+  const profileCall = calls.find((c) => schemaOf(c).includes("planChanged"));
+  check(
+    "each job runs on its own configured model",
+    writerCall?.model === "test/writer-model" &&
+      profileCall?.model === "test/profile-model",
+    `writer=${writerCall?.model}, profile=${profileCall?.model}`,
+  );
+  check(
+    "routing is pinned to providers that honour the schema",
+    calls.every((c) => c.provider?.require_parameters === true),
+    `${calls.length} call(s)`,
+  );
+  check(
+    "configured fallbacks are offered to the router",
+    calls.every(
+      (c) =>
+        Array.isArray(c.models) &&
+        c.models[0] === c.model &&
+        c.models.includes("test/fallback-a"),
+    ),
+    JSON.stringify(writerCall?.models ?? null),
+  );
+  check(
+    "structured output is requested as a strict json schema",
+    calls.every((c) => c.response_format?.type === "json_schema"),
+    `${calls.length} call(s)`,
+  );
+  const [dailyRow] = await sql`
+    select model from messages where kind = 'daily' and model is not null limit 1`;
+  check(
+    "the model that served the request is recorded on the message",
+    dailyRow?.model === "test/writer-model",
+    `model=${dailyRow?.model}`,
   );
 
   // §5/§8 — one-click unsubscribe must be a real HTTPS endpoint (RFC 8058),
@@ -476,6 +527,31 @@ async function main() {
     "correct admin password opens the dashboard",
     dashboard.status === 200 && dashboardHtml.includes("hana@example.com"),
     `HTTP ${dashboard.status}`,
+  );
+
+  // The admin picker is the point of the gateway: preview the same subscriber
+  // through a second model without touching config or redeploying.
+  const [hanaRow] = await sql`select id from subscribers where email = 'hana@example.com'`;
+  const before = (await aiCalls()).length;
+  await actionPost(
+    `/admin/subscribers/${hanaRow.id}`,
+    { subscriberId: hanaRow.id, model: "test/other-model" },
+    { headers: { cookie }, match: "preview-model" },
+  );
+  const previewCall = (await aiCalls()).slice(before).find((c) =>
+    Object.keys(c.response_format?.json_schema?.schema?.properties ?? {}).includes(
+      "body",
+    ),
+  );
+  check(
+    "admin can preview through a different model",
+    previewCall?.model === "test/other-model",
+    `model=${previewCall?.model}`,
+  );
+  check(
+    "an explicit model choice is not silently re-routed",
+    previewCall !== undefined && previewCall.models === undefined,
+    "no fallback list on an explicit choice",
   );
 
   // ── summary ──

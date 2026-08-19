@@ -70,6 +70,9 @@ export async function previewNext(formData: FormData): Promise<void> {
   const id = String(formData.get("subscriberId"));
   const subscriber = await loadSubscriber(id);
   const db = getDb();
+  // Optional: preview through a different model than the configured writer,
+  // so two models can be compared on the same subscriber's real history.
+  const modelOverride = String(formData.get("model") ?? "").trim() || undefined;
 
   const profile = await db.query.profiles.findFirst({
     where: eq(schema.profiles.subscriberId, id),
@@ -77,7 +80,12 @@ export async function previewNext(formData: FormData): Promise<void> {
   const dayNumber = subscriber.dayNumber + 1;
 
   try {
-    const generated = await generateDailyEmail(subscriber, profile, dayNumber);
+    const generated = await generateDailyEmail(
+      subscriber,
+      profile,
+      dayNumber,
+      modelOverride,
+    );
     await db.insert(schema.events).values({
       subscriberId: id,
       type: "daily_generated",

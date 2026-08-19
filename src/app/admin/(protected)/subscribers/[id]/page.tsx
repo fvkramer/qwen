@@ -17,6 +17,7 @@ import {
   subscriberPill,
 } from "@/lib/admin/format";
 import { getSubscriberDetail } from "@/lib/admin/queries";
+import { previewModels } from "@/lib/ai/client";
 
 export const dynamic = "force-dynamic";
 
@@ -30,6 +31,7 @@ export default async function SubscriberDetail({
   if (!detail) notFound();
 
   const { subscriber, profile, timeline, preview, safetyFlags } = detail;
+  const models = previewModels();
   const lastDaily = timeline.find(
     (e) => e.type === "message" && e.message.kind === "daily",
   );
@@ -64,8 +66,26 @@ export default async function SubscriberDetail({
       <h2>Actions</h2>
       <div className="card card--plain">
         <div className="actions">
-          <form action={previewNext}>
+          <form action={previewNext} className="actions">
             <input type="hidden" name="subscriberId" value={subscriber.id} />
+            <div className="field">
+              <label className="kicker" htmlFor="preview-model">
+                Model
+              </label>
+              <input
+                id="preview-model"
+                name="model"
+                list="openrouter-models"
+                defaultValue={models[0] ?? ""}
+                placeholder="vendor/model-slug"
+                size={28}
+              />
+              <datalist id="openrouter-models">
+                {models.map((m) => (
+                  <option key={m} value={m} />
+                ))}
+              </datalist>
+            </div>
             <button className="btn" type="submit">
               {preview ? "Regenerate preview" : "Preview next email"}
             </button>
@@ -167,7 +187,8 @@ export default async function SubscriberDetail({
         <div className="card">
           <p className="muted" style={{ marginBottom: 10 }}>
             Preview of day {preview.dayNumber ?? subscriber.dayNumber + 1},
-            generated {relative(preview.at)}. Not sent.
+            generated {relative(preview.at)}
+            {preview.model ? ` by ${preview.model}` : ""}. Not sent.
           </p>
           <div className="entry" style={{ paddingBottom: 0 }}>
             <div className="subject">{preview.subject}</div>
@@ -182,6 +203,7 @@ export default async function SubscriberDetail({
             </form>
             <form action={previewNext}>
               <input type="hidden" name="subscriberId" value={subscriber.id} />
+              <input type="hidden" name="model" value={preview.model ?? ""} />
               <button className="btn" type="submit">
                 Regenerate
               </button>

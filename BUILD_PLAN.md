@@ -32,11 +32,11 @@ Admin (internal, single-tenant) needs to see: subscriber list and state, every m
 - Next.js (App Router, TypeScript) on Vercel
 - Postgres (Neon or Supabase) + Drizzle ORM + migrations
 - Resend for outbound email and inbound reply webhooks (Postmark inbound is an acceptable substitute)
-- Anthropic SDK (`@anthropic-ai/sdk`) for plan generation
+- OpenRouter (OpenAI-compatible API) for plan generation, so the model behind each job is configuration rather than code
 - Vercel Cron for the daily send
 - Auth for `/admin` only (Auth.js single-user credentials, or Vercel password protection)
 
-Env vars: `DATABASE_URL`, `RESEND_API_KEY`, `RESEND_WEBHOOK_SECRET`, `ANTHROPIC_API_KEY`, `CRON_SECRET`, `ADMIN_PASSWORD`, `NEXT_PUBLIC_APP_URL`, `FROM_EMAIL`, `REPLY_TO_EMAIL`.
+Env vars: `DATABASE_URL`, `RESEND_API_KEY`, `RESEND_WEBHOOK_SECRET`, `OPENROUTER_API_KEY`, `OPENROUTER_MODEL`, `CRON_SECRET`, `ADMIN_PASSWORD`, `NEXT_PUBLIC_APP_URL`, `FROM_EMAIL`, `REPLY_TO_EMAIL`.
 
 ---
 
@@ -170,7 +170,7 @@ Each run:
 1. Select active subscribers whose local time now matches their `send_hour_local`/`send_minute_local` (compute with `date-fns-tz` from stored IANA zone) **and** who have no `daily` message today. That last check is the idempotency guard — the cron must be safe to run twice.
 2. For each, in a bounded concurrency pool (say 5):
    - Build context: profile summary + facts + current_plan, the last ~10 outbound subjects/bodies, unprocessed replies, `day_number`.
-   - Generate subject + body via the Anthropic SDK with a system prompt encoding the voice: warm, plainspoken, second person, no hype, no emoji, no fitness jargon, always explains why, always names something the person told you earlier, always ends with one question. Sized to the time they said they have. Beginner-safe progression.
+   - Generate subject + body via OpenRouter with a system prompt encoding the voice: warm, plainspoken, second person, no hype, no emoji, no fitness jargon, always explains why, always names something the person told you earlier, always ends with one question. Sized to the time they said they have. Beginner-safe progression.
    - Validate the output (length bounds, has subject, has a question, no placeholder text). On failure, retry once, then write `generation_failed` and surface it in admin — never send a broken email.
    - Send, increment `day_number`, mark the replies that informed it as processed, log events.
 3. Return a summary body: attempted / sent / failed. Log it.

@@ -1,14 +1,14 @@
-// Stub Resend + Anthropic on one port so the whole pipeline can be exercised
-// end-to-end with no real credentials. Both SDKs honour a base-URL env var
-// (RESEND_BASE_URL / ANTHROPIC_BASE_URL), so nothing in src/ knows about this.
+// Stub Resend + OpenRouter on one port so the whole pipeline can be exercised
+// end-to-end with no real credentials. Both clients honour a base-URL env var
+// (RESEND_BASE_URL / OPENROUTER_BASE_URL), so nothing in src/ knows about this.
 import { createServer } from "node:http";
 
 const PORT = Number(process.argv[2] ?? 3222);
 
 const outbox = [];
-let anthropicMode = "ok"; // ok | error | invalid
+let modelMode = "ok"; // ok | error | invalid
 let counter = 0;
-const anthropicCalls = [];
+const modelCalls = [];
 
 function json(res, status, body) {
   const payload = JSON.stringify(body);
@@ -20,9 +20,9 @@ function json(res, status, body) {
 }
 
 /** Answer whichever structured-output schema the caller asked for. */
-function anthropicBody(request) {
+function completionBody(request) {
   const props = Object.keys(
-    request?.output_config?.format?.schema?.properties ?? {},
+    request?.response_format?.json_schema?.schema?.properties ?? {},
   );
   const asked = JSON.stringify(request?.messages ?? []);
 
@@ -76,16 +76,16 @@ const server = createServer((req, res) => {
 
     // ── inspection API (test-only) ──
     if (url.pathname === "/__outbox") return json(res, 200, outbox);
-    if (url.pathname === "/__anthropic-calls") return json(res, 200, anthropicCalls);
+    if (url.pathname === "/__model-calls") return json(res, 200, modelCalls);
     if (url.pathname === "/__reset") {
       outbox.length = 0;
-      anthropicCalls.length = 0;
-      anthropicMode = "ok";
+      modelCalls.length = 0;
+      modelMode = "ok";
       return json(res, 200, { ok: true });
     }
     if (url.pathname === "/__mode") {
-      anthropicMode = url.searchParams.get("anthropic") ?? "ok";
-      return json(res, 200, { anthropicMode });
+      modelMode = url.searchParams.get("model") ?? "ok";
+      return json(res, 200, { modelMode });
     }
 
     // ── Resend ──
@@ -96,29 +96,34 @@ const server = createServer((req, res) => {
       return json(res, 200, { id });
     }
 
-    // ── Anthropic ──
-    if (url.pathname === "/v1/messages" && req.method === "POST") {
+    // ── OpenRouter (OpenAI chat-completions wire format) ──
+    if (url.pathname === "/chat/completions" && req.method === "POST") {
       const body = JSON.parse(raw);
-      anthropicCalls.push(body);
-      if (anthropicMode === "error") {
+      modelCalls.push(body);
+      if (modelMode === "error") {
         return json(res, 500, {
-          type: "error",
-          error: { type: "api_error", message: "mock upstream failure" },
+          error: { type: "server_error", message: "mock upstream failure" },
         });
       }
-      const text =
-        anthropicMode === "invalid"
+      const content =
+        modelMode === "invalid"
           ? JSON.stringify({ subject: "x", body: "too short" })
-          : JSON.stringify(anthropicBody(body));
+          : JSON.stringify(completionBody(body));
       return json(res, 200, {
-        id: `msg_mock_${counter++}`,
-        type: "message",
-        role: "assistant",
+        id: `gen_mock_${counter++}`,
+        object: "chat.completion",
+        created: 1700000000,
+        // OpenRouter reports the model that actually served the request, which
+        // may differ from the one asked for when `models` fallbacks are used.
         model: body.model,
-        content: [{ type: "text", text }],
-        stop_reason: "end_turn",
-        stop_sequence: null,
-        usage: { input_tokens: 1200, output_tokens: 300 },
+        choices: [
+          {
+            index: 0,
+            message: { role: "assistant", content, refusal: null },
+            finish_reason: "stop",
+          },
+        ],
+        usage: { prompt_tokens: 1200, completion_tokens: 300, total_tokens: 1500 },
       });
     }
 

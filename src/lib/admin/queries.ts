@@ -63,6 +63,7 @@ export type Preview = {
   dayNumber: number | null;
   subject: string;
   body: string;
+  model: string | null;
 };
 
 export type SubscriberDetail = {
@@ -140,7 +141,7 @@ export async function getSubscriberDetail(
   ].sort((a, b) => b.at.getTime() - a.at.getTime());
 
   const payload = previewEvents[0]?.payload as
-    | { subject?: string; body?: string; dayNumber?: number }
+    | { subject?: string; body?: string; dayNumber?: number; model?: string }
     | undefined;
 
   return {
@@ -154,6 +155,7 @@ export async function getSubscriberDetail(
             dayNumber: payload.dayNumber ?? null,
             subject: payload.subject,
             body: payload.body,
+            model: payload.model ?? null,
           }
         : null,
     safetyFlags: flagEvents.map((e) => ({

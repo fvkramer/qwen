@@ -1,9 +1,8 @@
-import { zodOutputFormat } from "@anthropic-ai/sdk/helpers/zod";
 import { and, desc, eq, isNull } from "drizzle-orm";
 import { z } from "zod";
 import { getDb, schema } from "@/db";
 import type { Profile, Subscriber } from "@/db/schema";
-import { getAnthropic, MODEL } from "./client";
+import { generateStructured } from "./generate";
 import { COACH_VOICE, SAFETY_RULES } from "./voice";
 
 const DailyEmailSchema = z.object({
@@ -46,9 +45,9 @@ export async function generateDailyEmail(
   subscriber: Subscriber,
   profile: Profile | undefined,
   dayNumber: number,
+  modelOverride?: string,
 ): Promise<GeneratedDaily> {
   const db = getDb();
-  const client = getAnthropic();
 
   const recent = await db
     .select({
@@ -123,30 +122,47 @@ Write today's email — the one email this person gets today. Requirements:
   type Attempt = {
     subject: string | null;
     body: string | null;
-    stopReason: string | null;
+    error: string | null;
+    model: string;
     inputTokens: number;
     outputTokens: number;
   };
 
   async function attempt(content: string): Promise<Attempt> {
-    const response = await client.messages.parse({
-      model: MODEL,
-      max_tokens: 6000,
-      system,
-      messages: [{ role: "user", content }],
-      output_config: { format: zodOutputFormat(DailyEmailSchema) },
-    });
-    return {
-      subject: response.parsed_output?.subject ?? null,
-      body: response.parsed_output?.body ?? null,
-      stopReason: response.stop_reason,
-      inputTokens: response.usage.input_tokens,
-      outputTokens: response.usage.output_tokens,
-    };
+    try {
+      const result = await generateStructured({
+        role: "writer",
+        system,
+        user: content,
+        schema: DailyEmailSchema,
+        schemaName: "daily_email",
+        modelOverride,
+      });
+      return {
+        subject: result.parsed.subject,
+        body: result.parsed.body,
+        error: null,
+        model: result.model,
+        inputTokens: result.promptTokens,
+        outputTokens: result.completionTokens,
+      };
+    } catch (err) {
+      // A refusal or an unparseable response is a failed attempt, not a
+      // crash: the retry below feeds the reason back and tries once more.
+      return {
+        subject: null,
+        body: null,
+        error: err instanceof Error ? err.message : String(err),
+        model: modelOverride ?? "",
+        inputTokens: 0,
+        outputTokens: 0,
+      };
+    }
   }
 
   let feedback: string | null = null;
   const usage = { input: 0, output: 0 };
+  let servedBy = "";
 
   for (let i = 0; i < 2; i++) {
     const result = await attempt(
@@ -156,9 +172,10 @@ Write today's email — the one email this person gets today. Requirements:
     );
     usage.input += result.inputTokens;
     usage.output += result.outputTokens;
+    if (result.model) servedBy = result.model;
 
-    if (result.stopReason === "refusal" || !result.subject || !result.body) {
-      feedback = `model returned stop_reason=${result.stopReason}`;
+    if (result.error || !result.subject || !result.body) {
+      feedback = result.error ?? "model returned no subject or body";
       continue;
     }
 
@@ -171,7 +188,7 @@ Write today's email — the one email this person gets today. Requirements:
     return {
       subject: result.subject.trim(),
       body: result.body.trim(),
-      model: MODEL,
+      model: servedBy,
       promptTokens: usage.input,
       completionTokens: usage.output,
     };

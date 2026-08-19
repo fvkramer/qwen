@@ -1,9 +1,8 @@
-import { zodOutputFormat } from "@anthropic-ai/sdk/helpers/zod";
 import { eq } from "drizzle-orm";
 import { z } from "zod";
 import { getDb, schema } from "@/db";
 import type { Profile, Reply, Subscriber } from "@/db/schema";
-import { getAnthropic, MODEL } from "./client";
+import { generateStructured } from "./generate";
 import { COACH_VOICE, SAFETY_RULES } from "./voice";
 
 const FactsSchema = z.object({
@@ -42,11 +41,11 @@ export async function updateProfileFromReply(
   reply: Reply,
 ): Promise<void> {
   const db = getDb();
-  const client = getAnthropic();
 
-  const response = await client.messages.parse({
-    model: MODEL,
-    max_tokens: 6000,
+  const result = await generateStructured({
+    role: "profile",
+    schema: ProfileUpdateSchema,
+    schemaName: "profile_update",
     system: `${COACH_VOICE}
 
 ${SAFETY_RULES}
@@ -57,10 +56,7 @@ You are acting as Qwen's memory. Given the current profile of a subscriber and t
 - Facts are short, concrete strings ("left knee sore going down stairs", "has a yoga mat", "20 minutes on weekday mornings"). Merge, dedupe, and update — if new information supersedes an old fact, replace it.
 - Set planChanged=true only if the reply forces a change to the current plan (injury, schedule change, strong preference). Return the full plan either way — unchanged if planChanged=false.
 - changeNote: one sentence describing what this reply changed, for the audit log.`,
-    messages: [
-      {
-        role: "user",
-        content: `Current profile summary:
+    user: `Current profile summary:
 ${profile?.summary || "(none yet — this may be their first reply)"}
 
 Current facts (JSON):
@@ -73,17 +69,11 @@ Day number: ${subscriber.dayNumber}
 
 Their new reply${reply.subject ? ` (subject: ${reply.subject})` : ""}:
 ${reply.bodyText}`,
-      },
-    ],
-    output_config: { format: zodOutputFormat(ProfileUpdateSchema) },
   });
 
-  if (response.stop_reason === "refusal" || !response.parsed_output) {
-    throw new Error(
-      `Profile update failed: stop_reason=${response.stop_reason}`,
-    );
-  }
-  const update = response.parsed_output;
+  // generateStructured throws on refusal or an unparseable response, so
+  // reaching here means the update is well-formed.
+  const update = result.parsed;
 
   await db
     .insert(schema.profiles)
@@ -113,9 +103,9 @@ ${reply.bodyText}`,
       replyId: reply.id,
       changeNote: update.changeNote,
       planChanged: update.planChanged,
-      model: MODEL,
-      promptTokens: response.usage.input_tokens,
-      completionTokens: response.usage.output_tokens,
+      model: result.model,
+      promptTokens: result.promptTokens,
+      completionTokens: result.completionTokens,
     },
   });
 

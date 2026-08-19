@@ -8,8 +8,8 @@ The product spec and build order live in [`BUILD_PLAN.md`](./BUILD_PLAN.md).
 ## Stack
 
 Next.js (App Router) on Vercel · Postgres + Drizzle · Resend for outbound mail
-and inbound replies · Anthropic SDK for generation · Vercel Cron for the daily
-and weekly jobs.
+and inbound replies · OpenRouter for generation · Vercel Cron for the daily and
+weekly jobs.
 
 ## Local development
 
@@ -31,7 +31,11 @@ npm run dev
 | `RESEND_API_KEY` | Outbound mail. |
 | `RESEND_WEBHOOK_SECRET` | Signing secret for the **inbound** webhook (`/api/inbound`). |
 | `RESEND_STATUS_WEBHOOK_SECRET` | Signing secret for the **delivery** webhook (`/api/webhooks/resend`). Falls back to `RESEND_WEBHOOK_SECRET` if unset, but Resend issues one secret per endpoint — set both. |
-| `ANTHROPIC_API_KEY` | Plan generation. |
+| `OPENROUTER_API_KEY` | Generation. All model calls go through OpenRouter. |
+| `OPENROUTER_MODEL` | Default model slug, e.g. `vendor/model-name`. Required — there is no hardcoded default. |
+| `OPENROUTER_MODEL_WRITER` / `_PROFILE` / `_PLANNER` | Optional per-job overrides. |
+| `OPENROUTER_MODEL_FALLBACKS` | Optional comma-separated fallbacks for when the primary is down. |
+| `OPENROUTER_PREVIEW_MODELS` | Optional extra slugs in the admin preview picker. |
 | `CRON_SECRET` | Bearer token both cron routes require. Vercel sends it automatically. |
 | `ADMIN_PASSWORD` | The only admin credential. It is also the session-cookie signing key, so rotating it signs everyone out. |
 | `NEXT_PUBLIC_APP_URL` | Absolute base URL, used to build confirmation links. |
@@ -103,21 +107,52 @@ DATABASE_URL=postgres://…/qwen_test npm run test:acceptance
 
 `test:acceptance` walks the acceptance checks in `BUILD_PLAN.md` §11 against a
 production build, a real Postgres, and a stub upstream (`tests/mock-upstream.mjs`)
-that impersonates Resend and the Anthropic API. No real credentials, no mail
-sent, nothing billed — both SDKs are redirected with `RESEND_BASE_URL` and
-`ANTHROPIC_BASE_URL`.
+that impersonates Resend and OpenRouter. No real credentials, no mail sent,
+nothing billed — both clients are redirected with `RESEND_BASE_URL` and
+`OPENROUTER_BASE_URL`.
 
 It truncates every table it touches, so point `DATABASE_URL` at a throwaway
 database. Note that `tests/run.sh` exports its environment explicitly rather
 than using `.env.local`: Next's dotenv never overrides variables already set in
-the environment, and some sandboxes already export `ANTHROPIC_BASE_URL`.
+the environment, and some sandboxes already export provider base URLs.
 
 Covered: signup (including with JavaScript disabled), double signup, confirm and
 intake, threading, `List-Unsubscribe` headers, reply → profile → next-day
 continuity, cron idempotency, no-early-sends, `stop`, generation failure and
 output validation, the emergency and crisis screens, the delivery webhook
 (unsigned, out-of-order, soft bounce, hard bounce, complaint), the weekly
-planner, and admin auth.
+planner, admin auth, per-job model routing, schema-capable provider pinning,
+fallback lists, and the admin model picker.
+
+## Models
+
+Every model call goes through [OpenRouter](https://openrouter.ai), so which
+model does which job is configuration, not code. There are three jobs:
+
+| Job | Env | What it does |
+| --- | --- | --- |
+| `writer` | `OPENROUTER_MODEL_WRITER` | Writes the daily coaching email. This is the one whose voice you tune. |
+| `profile` | `OPENROUTER_MODEL_PROFILE` | Folds each reply into the durable profile and facts. |
+| `planner` | `OPENROUTER_MODEL_PLANNER` | Regenerates the week's forward plan. |
+
+Each falls back to `OPENROUTER_MODEL`. There is deliberately **no hardcoded
+default slug** — OpenRouter's catalogue changes, and a stale default would fail
+at send time rather than at boot. Set at least `OPENROUTER_MODEL`.
+
+Requests pin `provider.require_parameters`, so OpenRouter only routes to
+providers that honour the JSON schema; a provider that would quietly return
+prose instead of structured output is never selected. `OPENROUTER_MODEL_FALLBACKS`
+(or a per-job `…_FALLBACKS`) adds models the router tries when the primary is
+rate-limited or down, so one flaky provider does not cost a subscriber their
+morning email.
+
+`messages.model` records the model that *actually served* each send, which is
+not always the one requested when fallbacks are in play.
+
+To compare models before switching, use the model box on a subscriber's admin
+page: preview the same person's real history through any slug, read both, then
+change the env var. An explicit choice there is never re-routed through
+fallbacks — you see exactly the model you asked for.
 
 ## Admin
 
