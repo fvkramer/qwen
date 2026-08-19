@@ -1,7 +1,7 @@
 import { eq } from "drizzle-orm";
 import { getDb, schema } from "@/db";
 import { generateAndSendDaily } from "@/lib/pipeline/sendDaily";
-import { localParts } from "@/lib/time";
+import { isDueNow } from "@/lib/time";
 
 export const maxDuration = 600;
 
@@ -20,12 +20,11 @@ export async function GET(request: Request) {
     .from(schema.subscribers)
     .where(eq(schema.subscribers.status, "active"));
 
-  // Runs hourly at minute 0: due = everyone whose local hour matches their
-  // send hour. The one-daily-per-local-day check inside generateAndSendDaily
-  // is the idempotency guard — this cron is safe to run twice.
-  const due = active.filter(
-    (s) => localParts(s.timezone).hour === s.sendHourLocal,
-  );
+  // Due = everyone whose local send time has arrived within the last hour, so
+  // nobody is mailed before the time they chose. The one-daily-per-local-day
+  // check inside generateAndSendDaily is the idempotency guard — this cron is
+  // safe to run twice, and safe to schedule more often than hourly.
+  const due = active.filter((s) => isDueNow(s));
 
   let sent = 0;
   let skipped = 0;

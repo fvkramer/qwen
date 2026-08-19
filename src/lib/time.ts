@@ -32,3 +32,27 @@ export function localParts(timezone: string, at: Date = new Date()): LocalParts 
 export function localDate(timezone: string, at: Date = new Date()): string {
   return localParts(timezone, at).date;
 }
+
+/**
+ * Is this subscriber due for today's email right now?
+ *
+ * True from their local send time until `windowMinutes` after it, so a send is
+ * never *early* — mailing someone at 06:00 when they asked for 06:30 breaks the
+ * promise the landing page makes. Matching a window rather than an exact minute
+ * keeps this correct at any cron granularity: hourly today (06:30 → fires at
+ * 07:00), and exactly on time if the cron is tightened to every 15 or 30
+ * minutes, with no code change. Pair it with the one-per-local-day guard,
+ * which is what makes overlapping runs safe.
+ */
+export function isDueNow(
+  subscriber: { timezone: string; sendHourLocal: number; sendMinuteLocal: number },
+  at: Date = new Date(),
+  windowMinutes = 60,
+): boolean {
+  const now = localParts(subscriber.timezone, at);
+  const minutesSinceSendTime =
+    now.hour * 60 +
+    now.minute -
+    (subscriber.sendHourLocal * 60 + subscriber.sendMinuteLocal);
+  return minutesSinceSendTime >= 0 && minutesSinceSendTime < windowMinutes;
+}

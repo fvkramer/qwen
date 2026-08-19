@@ -15,6 +15,14 @@ export function SignupForm({ id, variant = "light", status, microcopy }: Props) 
       className={`signup${variant === "poster" ? " signup--poster" : ""}`}
     >
       <input type="hidden" name="form" value={id} />
+      {/*
+        Deliberately stamped per render: this is a server component on a
+        dynamic route, so the value is "when this visitor was served the page",
+        which is exactly what the min-time-on-page bot check in subscribe()
+        measures against. It would be wrong — and the check useless — if this
+        page were ever prerendered.
+      */}
+      {/* eslint-disable-next-line react-hooks/purity */}
       <input type="hidden" name="t" value={Date.now()} />
       {/* Honeypot: humans never see this field; bots that fill it are dropped. */}
       <div className="hp" aria-hidden="true">

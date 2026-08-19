@@ -6,11 +6,13 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "next lint",
+    "lint": "eslint .",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate",
     "db:studio": "drizzle-kit studio",
-    "db:seed": "tsx scripts/seed.ts"
+    "db:seed": "tsx scripts/seed.ts",
+    "test": "tsx tests/unit.mjs",
+    "test:acceptance": "bash tests/run.sh"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.117.1",
@@ -30,6 +32,8 @@
     "@types/react-dom": "^19.2.4",
     "dotenv": "^17.4.2",
     "drizzle-kit": "^0.31.10",
+    "eslint": "^9.39.5",
+    "eslint-config-next": "^16.3.1",
     "tailwindcss": "^4",
     "tsx": "^4.23.12",
     "typescript": "^5"

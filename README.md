@@ -71,11 +71,44 @@ headers, and all of a subscriber's emails thread into one conversation via
 
 Declared in `vercel.json`:
 
-- `/api/cron/daily` hourly — sends to everyone whose local hour matches their
-  send hour. Safe to run twice: exactly one daily email per subscriber per
-  local day is enforced in the pipeline, not by the schedule.
+- `/api/cron/daily` hourly — sends to everyone whose local send time has
+  arrived within the last hour. Safe to run twice: exactly one daily email per
+  subscriber per local day is enforced in the pipeline, not by the schedule.
 - `/api/cron/weekly` Mondays — regenerates each active subscriber's
   `current_plan` so progression looks ahead rather than only reacting.
+
+**Send-time granularity.** Subscribers have a send hour *and* minute, and the
+default is 06:30 — but an hourly cron can only fire on the hour. The selection
+rule is "at or after their send time, within the last 60 minutes", so a 06:30
+subscriber is mailed at 07:00: never early, at most an hour late. To land on
+06:30 exactly, tighten the schedule to `*/30 * * * *` (or `*/15`); the code
+needs no change, and the once-per-local-day guard already makes the extra runs
+free. More frequent crons need a Vercel plan that allows them.
+
+## Tests
+
+```bash
+npm test                                     # pure logic: scheduling, timezones, DST
+DATABASE_URL=postgres://…/qwen_test npm run test:acceptance
+```
+
+`test:acceptance` walks the acceptance checks in `BUILD_PLAN.md` §11 against a
+production build, a real Postgres, and a stub upstream (`tests/mock-upstream.mjs`)
+that impersonates Resend and the Anthropic API. No real credentials, no mail
+sent, nothing billed — both SDKs are redirected with `RESEND_BASE_URL` and
+`ANTHROPIC_BASE_URL`.
+
+It truncates every table it touches, so point `DATABASE_URL` at a throwaway
+database. Note that `tests/run.sh` exports its environment explicitly rather
+than using `.env.local`: Next's dotenv never overrides variables already set in
+the environment, and some sandboxes already export `ANTHROPIC_BASE_URL`.
+
+Covered: signup (including with JavaScript disabled), double signup, confirm and
+intake, threading, `List-Unsubscribe` headers, reply → profile → next-day
+continuity, cron idempotency, no-early-sends, `stop`, generation failure and
+output validation, the emergency and crisis screens, the delivery webhook
+(unsigned, out-of-order, soft bounce, hard bounce, complaint), the weekly
+planner, and admin auth.
 
 ## Admin
 

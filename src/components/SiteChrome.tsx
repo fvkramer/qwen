@@ -1,9 +1,11 @@
+import Link from "next/link";
+
 export function SiteHeader() {
   return (
     <header className="site-header">
-      <a className="logo" href="/">
+      <Link className="logo" href="/">
         Qwen
-      </a>
+      </Link>
       <span className="kicker">Your personal trainer</span>
     </header>
   );
