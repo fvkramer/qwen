@@ -54,6 +54,9 @@ export const subscribers = pgTable(
     confirmedAt: timestamp("confirmed_at", { withTimezone: true }),
     dayNumber: integer("day_number").notNull().default(0),
     threadMessageId: text("thread_message_id"),
+    // Admin "hold tomorrow's send": the subscriber's local date to skip.
+    // Self-expiring — once that date passes, sending resumes on its own.
+    holdDate: text("hold_date"),
     createdAt: timestamp("created_at", { withTimezone: true })
       .notNull()
       .defaultNow(),
@@ -122,6 +125,7 @@ export const messages = pgTable(
       table.createdAt.desc(),
     ),
     index("messages_message_id_idx").on(table.messageId),
+    index("messages_provider_id_idx").on(table.providerId),
   ],
 );
 
@@ -165,7 +169,9 @@ export type EventType =
   | "resumed"
   | "stopped"
   | "bounced"
+  | "complained"
   | "safety_flagged"
+  | "admin_action"
   | "generation_failed"
   | "send_failed";
 
