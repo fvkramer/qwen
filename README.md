@@ -63,9 +63,18 @@ app can compensate for their absence:
 - **DMARC** — start at `v=DMARC1; p=none; rua=mailto:…`, read reports for a
   couple of weeks, then tighten to `p=quarantine`.
 
-Every send already carries `List-Unsubscribe` and `List-Unsubscribe-Post`
-headers, and all of a subscriber's emails thread into one conversation via
-`In-Reply-To`/`References` anchored on the intake message.
+Every send carries RFC 8058 one-click unsubscribe — `List-Unsubscribe` with
+an HTTPS URL (plus a `mailto:` fallback) and `List-Unsubscribe-Post` — which
+Gmail and Yahoo require of bulk senders. Providers POST
+`/api/unsubscribe/<token>`; the visible footer link points at a confirmation
+page instead, so mail-security crawlers that follow every URL cannot silently
+unsubscribe people. All of a subscriber's emails thread into one conversation
+via `In-Reply-To`/`References` anchored on the intake message.
+
+Still outstanding and not something the code can supply: **CAN-SPAM requires a
+valid physical postal address in commercial email.** Add yours to
+`emailFooter()` in `src/lib/email/templates/footer.ts` before sending at
+volume.
 
 ## Cron
 

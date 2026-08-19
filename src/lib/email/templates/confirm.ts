@@ -1,5 +1,3 @@
-import { EMAIL_FOOTER } from "./footer";
-
 export function confirmTemplate(confirmUrl: string) {
   return {
     subject: "Confirm your email",
@@ -7,7 +5,6 @@ export function confirmTemplate(confirmUrl: string) {
 
 ${confirmUrl}
 
-If this wasn't you, ignore this and nothing happens.
-${EMAIL_FOOTER}`,
+If this wasn't you, ignore this and nothing happens.`,
   };
 }

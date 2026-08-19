@@ -3,7 +3,6 @@ import { getDb, schema } from "@/db";
 import { updateProfileFromReply } from "@/lib/ai/updateProfile";
 import { sendEmail } from "@/lib/email/send";
 import { isBareCommand, stripQuotedReply } from "@/lib/email/replyParser";
-import { EMAIL_FOOTER } from "@/lib/email/templates/footer";
 import {
   CRISIS_RESPONSE,
   EMERGENCY_RESPONSE,
@@ -136,7 +135,7 @@ export async function handleInboundReply(
       subscriber,
       kind: "system",
       subject: template.subject,
-      text: `${template.text}\n${EMAIL_FOOTER}`,
+      text: template.text,
     });
     if (flag === "crisis") {
       await db

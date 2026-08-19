@@ -201,6 +201,50 @@ async function main() {
     `${afterReply.length} email(s)`,
   );
 
+  // §5/§8 — one-click unsubscribe must be a real HTTPS endpoint (RFC 8058),
+  // not a mailto paired with a One-Click post header.
+  const anyEmail = (await outbox())[0];
+  const listUnsub = anyEmail?.headers?.["List-Unsubscribe"] ?? "";
+  const oneClickUrl = /<(https?:\/\/[^>]+)>/.exec(listUnsub)?.[1];
+  check(
+    "List-Unsubscribe advertises an HTTPS one-click URL",
+    Boolean(oneClickUrl) && listUnsub.includes("mailto:"),
+    listUnsub,
+  );
+  check(
+    "every email carries a visible unsubscribe link",
+    (await outbox()).every((m) => m.text?.includes("/unsubscribe/")),
+    `${(await outbox()).length} email(s)`,
+  );
+  check(
+    "the footer appears exactly once per email",
+    (await outbox()).every(
+      (m) => (m.text.match(/not medical advice/g) ?? []).length === 1,
+    ),
+    "no double footers",
+  );
+
+  const [beforeUnsub] = await sql`select * from subscribers where email = 'ana@example.com'`;
+  const oneClick = await fetch(oneClickUrl, {
+    method: "POST",
+    headers: { "content-type": "application/x-www-form-urlencoded" },
+    body: "List-Unsubscribe=One-Click",
+  });
+  const [afterUnsub] = await sql`select * from subscribers where id = ${beforeUnsub.id}`;
+  check(
+    "a provider POST to the one-click URL stops the emails",
+    oneClick.status === 200 && afterUnsub.status === "stopped",
+    `HTTP ${oneClick.status}, status=${afterUnsub.status}`,
+  );
+  const repeat = await fetch(oneClickUrl, { method: "POST" });
+  check("one-click is idempotent", repeat.status === 200, `HTTP ${repeat.status}`);
+  const bogus = await fetch(`${APP}/api/unsubscribe/not-a-real-token`, { method: "POST" });
+  check(
+    "an unknown token reveals nothing",
+    bogus.status === 200,
+    `HTTP ${bogus.status}`,
+  );
+
   // §11 — "Cron run twice in the same hour sends exactly one daily email."
   await reset();
   // Due right now: the cron honours the minute, not just the hour.

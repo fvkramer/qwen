@@ -3,6 +3,7 @@ import { eq } from "drizzle-orm";
 import { Resend } from "resend";
 import { getDb, schema } from "@/db";
 import type { Subscriber } from "@/db/schema";
+import { emailFooter } from "./templates/footer";
 
 type SendArgs = {
   subscriber: Subscriber;
@@ -54,6 +55,13 @@ export async function sendEmail(args: SendArgs) {
   const from = required("FROM_EMAIL");
   const replyTo = required("REPLY_TO_EMAIL");
   const domain = from.match(/@([A-Za-z0-9.-]+)/)?.[1] ?? "qwen.local";
+  const appUrl = process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000";
+  const token = args.subscriber.unsubscribeToken;
+  // RFC 8058 one-click requires an HTTPS URI: pairing List-Unsubscribe-Post
+  // with a mailto alone is non-conformant, and Gmail/Yahoo bulk-sender rules
+  // expect the URL form. The mailto stays as a fallback for older clients.
+  const oneClickUrl = `${appUrl}/api/unsubscribe/${token}`;
+  const text = `${args.text}\n${emailFooter(`${appUrl}/unsubscribe/${token}`)}`;
   const messageId = `<${randomUUID()}@${domain}>`;
   const inReplyTo = args.subscriber.threadMessageId ?? null;
 
@@ -64,8 +72,8 @@ export async function sendEmail(args: SendArgs) {
       kind: args.kind,
       dayNumber: args.dayNumber,
       subject: args.subject,
-      bodyText: args.text,
-      bodyHtml: args.html ?? renderHtml(args.text),
+      bodyText: text,
+      bodyHtml: args.html ?? renderHtml(text),
       messageId,
       inReplyTo,
       status: "queued",
@@ -79,7 +87,7 @@ export async function sendEmail(args: SendArgs) {
     const resend = new Resend(required("RESEND_API_KEY"));
     const headers: Record<string, string> = {
       "Message-ID": messageId,
-      "List-Unsubscribe": `<mailto:${replyTo}?subject=stop>`,
+      "List-Unsubscribe": `<${oneClickUrl}>, <mailto:${replyTo}?subject=stop>`,
       "List-Unsubscribe-Post": "List-Unsubscribe=One-Click",
     };
     if (inReplyTo) {
@@ -92,8 +100,8 @@ export async function sendEmail(args: SendArgs) {
       to: args.subscriber.email,
       replyTo,
       subject: args.subject,
-      text: args.text,
-      html: args.html ?? renderHtml(args.text),
+      text,
+      html: args.html ?? renderHtml(text),
       headers,
     });
     if (error) throw new Error(`Resend: ${error.message}`);

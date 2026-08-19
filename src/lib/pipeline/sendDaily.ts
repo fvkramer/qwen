@@ -3,7 +3,6 @@ import { getDb, schema } from "@/db";
 import type { Subscriber } from "@/db/schema";
 import { generateDailyEmail, type GeneratedDaily } from "@/lib/ai/generateDaily";
 import { sendEmail } from "@/lib/email/send";
-import { EMAIL_FOOTER } from "@/lib/email/templates/footer";
 import { localDate } from "@/lib/time";
 
 /**
@@ -60,7 +59,7 @@ async function deliverDaily(
     subscriber,
     kind: "daily",
     subject: generated.subject,
-    text: `${generated.body}\n${EMAIL_FOOTER}`,
+    text: generated.body,
     dayNumber,
     model: generated.model,
     promptTokens: generated.promptTokens,

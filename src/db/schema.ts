@@ -1,3 +1,4 @@
+import { sql } from "drizzle-orm";
 import {
   customType,
   index,
@@ -51,6 +52,12 @@ export const subscribers = pgTable(
     sendHourLocal: integer("send_hour_local").notNull().default(6),
     sendMinuteLocal: integer("send_minute_local").notNull().default(30),
     confirmToken: text("confirm_token"),
+    // Stable per-subscriber secret for the RFC 8058 one-click unsubscribe URL.
+    // Unlike confirmToken it is never cleared — the link has to keep working
+    // for the life of every email already sitting in their inbox.
+    unsubscribeToken: text("unsubscribe_token")
+      .notNull()
+      .default(sql`replace(gen_random_uuid()::text, '-', '')`),
     confirmedAt: timestamp("confirmed_at", { withTimezone: true }),
     dayNumber: integer("day_number").notNull().default(0),
     threadMessageId: text("thread_message_id"),

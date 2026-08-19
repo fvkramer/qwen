@@ -1,0 +1,1 @@
+ALTER TABLE "subscribers" ADD COLUMN "unsubscribe_token" text DEFAULT replace(gen_random_uuid()::text, '-', '') NOT NULL;
