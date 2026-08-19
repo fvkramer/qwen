@@ -3,6 +3,7 @@ import { eq } from "drizzle-orm";
 import { Resend } from "resend";
 import { getDb, schema } from "@/db";
 import type { Subscriber } from "@/db/schema";
+import { sanitizeHeaderValue } from "@/lib/security";
 import { emailFooter } from "./templates/footer";
 
 type SendArgs = {
@@ -62,6 +63,8 @@ export async function sendEmail(args: SendArgs) {
   // expect the URL form. The mailto stays as a fallback for older clients.
   const oneClickUrl = `${appUrl}/api/unsubscribe/${token}`;
   const text = `${args.text}\n${emailFooter(`${appUrl}/unsubscribe/${token}`)}`;
+  // Model-written, so it must not be able to smuggle a newline into a header.
+  const subject = sanitizeHeaderValue(args.subject);
   const messageId = `<${randomUUID()}@${domain}>`;
   const inReplyTo = args.subscriber.threadMessageId ?? null;
 
@@ -71,7 +74,7 @@ export async function sendEmail(args: SendArgs) {
       subscriberId: args.subscriber.id,
       kind: args.kind,
       dayNumber: args.dayNumber,
-      subject: args.subject,
+      subject,
       bodyText: text,
       bodyHtml: args.html ?? renderHtml(text),
       messageId,
@@ -99,7 +102,7 @@ export async function sendEmail(args: SendArgs) {
       from,
       to: args.subscriber.email,
       replyTo,
-      subject: args.subject,
+      subject,
       text,
       html: args.html ?? renderHtml(text),
       headers,

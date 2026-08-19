@@ -2,6 +2,7 @@
 
 import { desc, and, eq } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
+import { headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { getDb, schema } from "@/db";
 import type { Subscriber } from "@/db/schema";
@@ -13,6 +14,7 @@ import {
   startSession,
 } from "@/lib/admin/auth";
 import { sendEmail } from "@/lib/email/send";
+import { clientIp, consumeRateLimit } from "@/lib/security";
 import {
   generateAndSendDaily,
   hasDailyToday,
@@ -45,7 +47,22 @@ function backTo(id: string): string {
   return `/admin/subscribers/${id}`;
 }
 
+// A single shared password is the whole of admin auth, so the only thing
+// standing between an attacker and the subscriber list is how many guesses
+// they get. Ten an hour per IP, counted before the comparison.
+const LOGIN_ATTEMPTS_PER_HOUR = 10;
+
 export async function login(formData: FormData): Promise<void> {
+  const ip = clientIp(await headers());
+  const attempts = await consumeRateLimit(
+    `admin:login:${ip}`,
+    LOGIN_ATTEMPTS_PER_HOUR,
+    60 * 60 * 1000,
+  );
+  if (!attempts.allowed) {
+    redirect("/admin/login?err=throttled");
+  }
+
   const password = String(formData.get("password") ?? "");
   if (!password || !passwordMatches(password)) {
     redirect("/admin/login?err=1");

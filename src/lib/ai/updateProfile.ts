@@ -3,7 +3,7 @@ import { z } from "zod";
 import { getDb, schema } from "@/db";
 import type { Profile, Reply, Subscriber } from "@/db/schema";
 import { generateStructured } from "./generate";
-import { COACH_VOICE, SAFETY_RULES } from "./voice";
+import { COACH_VOICE, SAFETY_RULES, UNTRUSTED_INPUT_RULES } from "./voice";
 
 const FactsSchema = z.object({
   injuries: z.array(z.string()),
@@ -50,6 +50,8 @@ export async function updateProfileFromReply(
 
 ${SAFETY_RULES}
 
+${UNTRUSTED_INPUT_RULES}
+
 You are acting as Qwen's memory. Given the current profile of a subscriber and their newest email reply, produce the updated profile. Rules:
 - NEVER discard information. Everything they have ever said stays in the summary or facts; "my knee hurt on Sunday" must still shape plans three weeks later.
 - The summary is a rolling narrative: goals, constraints, history, how they talk about themselves. Rewrite it to incorporate the new reply; keep it under ~300 words.
@@ -68,7 +70,9 @@ ${JSON.stringify(profile?.currentPlan ?? null, null, 2)}
 Day number: ${subscriber.dayNumber}
 
 Their new reply${reply.subject ? ` (subject: ${reply.subject})` : ""}:
-${reply.bodyText}`,
+<subscriber_reply>
+${reply.bodyText}
+</subscriber_reply>`,
   });
 
   // generateStructured throws on refusal or an unparseable response, so

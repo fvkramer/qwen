@@ -38,7 +38,9 @@ npm run dev
 | `OPENROUTER_PREVIEW_MODELS` | Optional extra slugs in the admin preview picker. |
 | `CRON_SECRET` | Bearer token both cron routes require. Vercel sends it automatically. |
 | `ADMIN_PASSWORD` | The only admin credential. It is also the session-cookie signing key, so rotating it signs everyone out. |
-| `NEXT_PUBLIC_APP_URL` | Absolute base URL, used to build confirmation links. |
+| `NEXT_PUBLIC_APP_URL` | Absolute base URL, used to build confirmation and unsubscribe links. |
+| `TRUST_PROXY_HEADERS` | Set to `1` only behind a proxy you control. Vercel is detected automatically. See Security. |
+| `INBOUND_ALLOW_UNVERIFIED` | Set to `1` to accept unauthenticated inbound replies. Leave unset. See Security. |
 | `FROM_EMAIL` | e.g. `Qwen <coach@qwen.fit>`. |
 | `REPLY_TO_EMAIL` | The inbound address replies are routed to. |
 
@@ -98,6 +100,61 @@ subscriber is mailed at 07:00: never early, at most an hour late. To land on
 needs no change, and the once-per-local-day guard already makes the extra runs
 free. More frequent crons need a Vercel plan that allows them.
 
+## Security
+
+The abuse surface is small but real: two public endpoints that spend money
+(each signup sends an email, each reply runs a model), a webhook that accepts
+mail from anyone, and a single-password admin.
+
+**Inbound replies are authenticated, not merely signed.** The webhook
+signature only proves a message arrived through Resend — not who wrote it, and
+a `From:` header is free to forge. A reply is acted on only if it threads onto
+a Message-ID we generated for *that* subscriber (a random UUID, so quoting it
+back is evidence of receipt) or the sending domain passed SPF or DKIM.
+Everything else is stored as a `reply_rejected` event and ignored — including
+`stop`, which would otherwise let anyone unsubscribe a stranger. If your
+provider strips `Authentication-Results` and legitimate replies start getting
+rejected, `INBOUND_ALLOW_UNVERIFIED=1` opens it back up; prefer fixing the
+provider.
+
+**Rate limits** are fixed-window counters in Postgres, incremented with one
+atomic upsert so concurrent requests cannot both slip under the same limit,
+and they fail *closed* — if the count cannot be read, the money is not spent.
+Signups are capped per IP and, separately, **per email address**, so nobody
+can point the form at a stranger's inbox and have us mail them repeatedly.
+Replies are capped per subscriber, and the reply is stored either way: a
+throttled subscriber loses the immediate turnaround, never their words. Admin
+logins are capped per IP.
+
+**Per-IP limits depend on knowing the caller's IP.** `x-forwarded-for` is
+client-settable, so if the app is reachable directly, rotating that header
+mints unlimited buckets and the limit stops existing. Forwarding headers are
+therefore trusted only when `VERCEL=1` or `TRUST_PROXY_HEADERS=1`; otherwise
+every caller shares one bucket — blunt, but not bypassable. **If you deploy
+anywhere other than Vercel, set `TRUST_PROXY_HEADERS=1` and make sure your
+proxy overwrites those headers.**
+
+**Cron endpoints** compare their bearer token in constant time and treat a
+missing `CRON_SECRET` as closed, not open — otherwise an unset variable turns
+the check into the guessable string `Bearer undefined`.
+
+**Model input is treated as data.** Subscriber text is delimited and the
+system prompt refuses instructions found inside it. This is defence in depth
+only: the hard limits — the emergency and crisis screens — are deterministic
+keyword matches that run *before* the model and route to fixed, human-written
+replies. Replies are truncated before they reach a prompt, both to bound cost
+and to limit what an injection can carry. Model-written subject lines are
+stripped of control characters so they cannot smuggle a header into an email.
+
+**Responses** carry CSP, HSTS, `X-Frame-Options: DENY`, `nosniff`, and a
+restrictive `Permissions-Policy`. `/admin`, `/confirm`, and `/unsubscribe`
+additionally send `X-Robots-Tag: noindex`.
+
+Not covered, and worth knowing: there is no CAPTCHA (the honeypot, time-on-page
+check and rate limits are the whole bot defence), no WAF, and admin is a single
+shared password — consider putting Vercel password protection in front of it as
+a second factor.
+
 ## Tests
 
 ```bash
@@ -122,7 +179,10 @@ continuity, cron idempotency, no-early-sends, `stop`, generation failure and
 output validation, the emergency and crisis screens, the delivery webhook
 (unsigned, out-of-order, soft bounce, hard bounce, complaint), the weekly
 planner, admin auth, per-job model routing, schema-capable provider pinning,
-fallback lists, and the admin model picker.
+fallback lists, and the admin model picker. Abuse resistance has its own
+scenarios: forged senders, forged `stop`, reply floods, oversized payloads,
+unauthenticated cron, header-spoofed signup floods, per-address email bombing,
+admin password guessing, and the response headers.
 
 ## Models
 

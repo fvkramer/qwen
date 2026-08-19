@@ -1,5 +1,6 @@
 import { eq } from "drizzle-orm";
 import { getDb, schema } from "@/db";
+import { bearerAuthorized } from "@/lib/security";
 import { generateAndSendDaily } from "@/lib/pipeline/sendDaily";
 import { isDueNow } from "@/lib/time";
 
@@ -9,7 +10,10 @@ const CONCURRENCY = 5;
 
 export async function GET(request: Request) {
   if (
-    request.headers.get("authorization") !== `Bearer ${process.env.CRON_SECRET}`
+    !bearerAuthorized(
+      request.headers.get("authorization"),
+      process.env.CRON_SECRET,
+    )
   ) {
     return Response.json({ error: "unauthorized" }, { status: 401 });
   }

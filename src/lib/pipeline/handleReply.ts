@@ -2,12 +2,17 @@ import { eq } from "drizzle-orm";
 import { getDb, schema } from "@/db";
 import { updateProfileFromReply } from "@/lib/ai/updateProfile";
 import { sendEmail } from "@/lib/email/send";
+import {
+  assessInboundTrust,
+  truncateReply,
+} from "@/lib/email/inboundTrust";
 import { isBareCommand, stripQuotedReply } from "@/lib/email/replyParser";
 import {
   CRISIS_RESPONSE,
   EMERGENCY_RESPONSE,
   screenReply,
 } from "@/lib/safety";
+import { consumeRateLimit } from "@/lib/security";
 import { generateAndSendDaily, hasDailyToday } from "./sendDaily";
 
 export type InboundEmail = {
@@ -15,8 +20,13 @@ export type InboundEmail = {
   subject: string | null;
   rawText: string;
   inReplyToHeader: string | null;
+  authenticationResults: string | null;
   raw: unknown;
 };
+
+// Model work per subscriber per hour. A genuine person does not reply twenty
+// times in an hour; a script trying to run up the bill does.
+const REPLIES_PER_HOUR = 20;
 
 const STOP_WORDS = ["stop", "unsubscribe", "cancel", "quit"];
 
@@ -41,8 +51,39 @@ export async function handleInboundReply(
     return "unknown_sender";
   }
 
-  const body = stripQuotedReply(inbound.rawText);
-  if (!body) return "empty";
+  const stripped = stripQuotedReply(inbound.rawText);
+  if (!stripped) return "empty";
+  const { text: body, truncated } = truncateReply(stripped);
+
+  // Match In-Reply-To against our own Message-IDs before trusting anything:
+  // this both links the reply to what it answers and proves the sender saw it.
+  let inReplyToMessageId: string | null = null;
+  let threadMatches = false;
+  if (inbound.inReplyToHeader) {
+    const parent = await db.query.messages.findFirst({
+      where: eq(schema.messages.messageId, inbound.inReplyToHeader),
+    });
+    if (parent && parent.subscriberId === subscriber.id) {
+      inReplyToMessageId = parent.id;
+      threadMatches = true;
+    }
+  }
+
+  const trust = assessInboundTrust({
+    threadMatches,
+    authenticationResults: inbound.authenticationResults,
+    allowUnverified: process.env.INBOUND_ALLOW_UNVERIFIED === "1",
+  });
+  if (!trust.trusted) {
+    // Never act on an unauthenticated message — not even "stop", which would
+    // otherwise let anyone unsubscribe a stranger by forging one header.
+    await db.insert(schema.events).values({
+      subscriberId: subscriber.id,
+      type: "reply_rejected",
+      payload: { reason: trust.reason, fromEmail: inbound.fromEmail },
+    });
+    return "unverified_sender";
+  }
 
   // stop / unsubscribe / cancel / quit — halt everything, confirm once.
   if (isBareCommand(body, STOP_WORDS)) {
@@ -94,15 +135,6 @@ export async function handleInboundReply(
     return "resumed";
   }
 
-  // Link the reply to the message it answers via In-Reply-To.
-  let inReplyToMessageId: string | null = null;
-  if (inbound.inReplyToHeader) {
-    const parent = await db.query.messages.findFirst({
-      where: eq(schema.messages.messageId, inbound.inReplyToHeader),
-    });
-    inReplyToMessageId = parent?.id ?? null;
-  }
-
   const [reply] = await db
     .insert(schema.replies)
     .values({
@@ -118,8 +150,24 @@ export async function handleInboundReply(
   await db.insert(schema.events).values({
     subscriberId: subscriber.id,
     type: "reply_received",
-    payload: { replyId: reply.id },
+    payload: { replyId: reply.id, trust: trust.reason, truncated },
   });
+
+  // Everything below this line costs money. The reply is already stored, so a
+  // throttled subscriber loses nothing but the immediate turnaround.
+  const budget = await consumeRateLimit(
+    `reply:${subscriber.id}`,
+    REPLIES_PER_HOUR,
+    60 * 60 * 1000,
+  );
+  if (!budget.allowed) {
+    await db.insert(schema.events).values({
+      subscriberId: subscriber.id,
+      type: "rate_limited",
+      payload: { scope: "reply", replyId: reply.id, count: budget.count },
+    });
+    return "rate_limited";
+  }
 
   // Safety screen (§8): fixed human-written response, flag in admin, and the
   // model never touches it.

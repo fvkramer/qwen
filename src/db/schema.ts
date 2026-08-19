@@ -6,6 +6,7 @@ import {
   jsonb,
   pgEnum,
   pgTable,
+  primaryKey,
   text,
   timestamp,
   uuid,
@@ -178,6 +179,8 @@ export type EventType =
   | "bounced"
   | "complained"
   | "safety_flagged"
+  | "reply_rejected"
+  | "rate_limited"
   | "admin_action"
   | "generation_failed"
   | "send_failed";
@@ -195,7 +198,28 @@ export const events = pgTable(
       .notNull()
       .defaultNow(),
   },
-  (table) => [index("events_created_idx").on(table.createdAt.desc())],
+  (table) => [
+    index("events_created_idx").on(table.createdAt.desc()),
+    index("events_type_created_idx").on(table.type, table.createdAt.desc()),
+  ],
+);
+
+/**
+ * Fixed-window counters for abuse control. Keyed by bucket + window so the
+ * increment is a single atomic upsert — two concurrent requests cannot both
+ * read "4 of 5" and both proceed.
+ */
+export const rateLimits = pgTable(
+  "rate_limits",
+  {
+    bucket: text("bucket").notNull(),
+    windowStart: timestamp("window_start", { withTimezone: true }).notNull(),
+    count: integer("count").notNull().default(0),
+  },
+  (table) => [
+    primaryKey({ columns: [table.bucket, table.windowStart] }),
+    index("rate_limits_window_idx").on(table.windowStart),
+  ],
 );
 
 export type Subscriber = typeof subscribers.$inferSelect;

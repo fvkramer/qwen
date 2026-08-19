@@ -41,14 +41,27 @@ function extractHeader(
   return null;
 }
 
+// An inbound email is a person typing a few sentences. A multi-megabyte body
+// is either a mail loop or someone probing for a way to spend our budget, and
+// parsing it is the expensive part — so bail before that, on the declared size.
+const MAX_PAYLOAD_BYTES = 1_000_000;
+
 export async function POST(request: Request) {
   const secret = process.env.RESEND_WEBHOOK_SECRET;
   if (!secret) {
     return Response.json({ error: "webhook not configured" }, { status: 500 });
   }
 
+  const declaredLength = Number(request.headers.get("content-length") ?? 0);
+  if (declaredLength > MAX_PAYLOAD_BYTES) {
+    return Response.json({ error: "payload too large" }, { status: 413 });
+  }
+
   // Verify the svix signature on the raw body. Reject unsigned.
   const rawBody = await request.text();
+  if (rawBody.length > MAX_PAYLOAD_BYTES) {
+    return Response.json({ error: "payload too large" }, { status: 413 });
+  }
   let payload: ResendInboundPayload;
   try {
     const webhook = new Webhook(secret);
@@ -80,6 +93,7 @@ export async function POST(request: Request) {
     subject: data.subject ?? null,
     rawText: text,
     inReplyToHeader: extractHeader(data.headers, "in-reply-to"),
+    authenticationResults: extractHeader(data.headers, "authentication-results"),
     raw: payload,
   });
 

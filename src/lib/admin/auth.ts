@@ -1,6 +1,7 @@
-import { createHmac, timingSafeEqual } from "node:crypto";
+import { createHmac } from "node:crypto";
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
+import { secretsMatch } from "@/lib/security";
 
 // Single-tenant admin auth (§2): one password, a signed session cookie, no
 // user table. The signing key is the password itself, so rotating the
@@ -19,15 +20,8 @@ function sign(payload: string): string {
   return createHmac("sha256", secret()).update(payload).digest("base64url");
 }
 
-/** Constant-time compare that tolerates unequal lengths. */
-function sameSecret(a: string, b: string): boolean {
-  const ha = createHmac("sha256", "cmp").update(a).digest();
-  const hb = createHmac("sha256", "cmp").update(b).digest();
-  return timingSafeEqual(ha, hb);
-}
-
 export function passwordMatches(input: string): boolean {
-  return sameSecret(input, secret());
+  return secretsMatch(input, secret());
 }
 
 export async function startSession(): Promise<void> {
@@ -55,7 +49,7 @@ export async function isAuthenticated(): Promise<boolean> {
   if (!Number.isFinite(Number(expiresAt)) || Number(expiresAt) < Date.now()) {
     return false;
   }
-  return sameSecret(signature, sign(expiresAt));
+  return secretsMatch(signature, sign(expiresAt));
 }
 
 /**

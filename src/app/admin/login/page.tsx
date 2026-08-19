@@ -8,7 +8,9 @@ export default async function AdminLogin({
   searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
   if (await isAuthenticated()) redirect("/admin");
-  const failed = (await searchParams).err === "1";
+  const err = (await searchParams).err;
+  const failed = err === "1";
+  const throttled = err === "throttled";
 
   return (
     <>
@@ -31,7 +33,11 @@ export default async function AdminLogin({
               autoFocus
             />
           </div>
-          {failed ? (
+          {throttled ? (
+            <p className="micro error" style={{ marginBottom: 12 }}>
+              Too many attempts. Try again later.
+            </p>
+          ) : failed ? (
             <p className="micro error" style={{ marginBottom: 12 }}>
               That password is wrong.
             </p>

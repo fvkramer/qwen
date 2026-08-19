@@ -1,15 +1,20 @@
 "use server";
 
 import { randomBytes } from "node:crypto";
-import { and, eq, gt, sql } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import { headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { z } from "zod";
 import { getDb, schema } from "@/db";
 import { sendEmail } from "@/lib/email/send";
 import { confirmTemplate } from "@/lib/email/templates/confirm";
+import { clientIp, consumeRateLimit } from "@/lib/security";
 
-const RATE_LIMIT_PER_HOUR = 5;
+const HOUR_MS = 60 * 60 * 1000;
+const SIGNUPS_PER_IP_PER_HOUR = 5;
+// A confirm email is money and, aimed at someone else's inbox, harassment.
+// One address may be asked to confirm twice an hour, however many people ask.
+const CONFIRMS_PER_EMAIL_PER_HOUR = 2;
 const MIN_TIME_ON_PAGE_MS = 3000;
 
 export async function subscribe(formData: FormData): Promise<void> {
@@ -32,24 +37,26 @@ export async function subscribe(formData: FormData): Promise<void> {
   const email = parsed.data;
 
   const hdrs = await headers();
-  const ip = hdrs.get("x-forwarded-for")?.split(",")[0]?.trim() || "unknown";
+  const ip = clientIp(hdrs);
 
   const db = getDb();
 
-  // Rate limit per IP using the signup events of the last hour. Over the
-  // limit we return the normal success state: no oracle either way.
-  const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000);
-  const [{ count }] = await db
-    .select({ count: sql<number>`count(*)::int` })
-    .from(schema.events)
-    .where(
-      and(
-        eq(schema.events.type, "signup"),
-        gt(schema.events.createdAt, oneHourAgo),
-        sql`${schema.events.payload}->>'ip' = ${ip}`,
-      ),
-    );
-  if (count >= RATE_LIMIT_PER_HOUR) redirect(success);
+  // Over any limit we return the normal success state: no oracle either way.
+  const perIp = await consumeRateLimit(
+    `signup:ip:${ip}`,
+    SIGNUPS_PER_IP_PER_HOUR,
+    HOUR_MS,
+  );
+  if (!perIp.allowed) redirect(success);
+
+  // Per-address limit, counted before we look the address up: without it,
+  // anyone can point the form at a stranger and have us mail them repeatedly.
+  const perEmail = await consumeRateLimit(
+    `signup:email:${email}`,
+    CONFIRMS_PER_EMAIL_PER_HOUR,
+    HOUR_MS,
+  );
+  if (!perEmail.allowed) redirect(success);
 
   const existing = await db.query.subscribers.findFirst({
     where: eq(schema.subscribers.email, email),

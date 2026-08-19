@@ -3,7 +3,7 @@ import { z } from "zod";
 import { getDb, schema } from "@/db";
 import type { Profile, Subscriber } from "@/db/schema";
 import { generateStructured } from "./generate";
-import { COACH_VOICE, SAFETY_RULES } from "./voice";
+import { COACH_VOICE, SAFETY_RULES, UNTRUSTED_INPUT_RULES } from "./voice";
 
 const DailyEmailSchema = z.object({
   subject: z.string(),
@@ -76,11 +76,13 @@ export async function generateDailyEmail(
     .orderBy(desc(schema.replies.createdAt))
     .limit(10);
 
-  const context = `Subscriber profile summary:
+  const context = `<subscriber_profile>
+Summary:
 ${profile?.summary || "(no profile yet — they may not have replied to the intake email; write a gentle, truly-beginner day-one plan and ask one question that helps you learn about them)"}
 
 Structured facts (JSON):
 ${JSON.stringify(profile?.facts ?? {}, null, 2)}
+</subscriber_profile>
 
 Current week's plan (JSON):
 ${JSON.stringify(profile?.currentPlan ?? null, null, 2)}
@@ -98,17 +100,21 @@ ${
 }
 
 Replies not yet acknowledged (newest first) — acknowledge naturally, do not quote them back:
+<subscriber_reply>
 ${
   unprocessed.length
     ? unprocessed.map((r) => `--- ${r.bodyText.slice(0, 800)}`).join("\n")
     : "(none)"
 }
+</subscriber_reply>
 
 Today is day ${dayNumber} for this subscriber.`;
 
   const system = `${COACH_VOICE}
 
 ${SAFETY_RULES}
+
+${UNTRUSTED_INPUT_RULES}
 
 Write today's email — the one email this person gets today. Requirements:
 - Subject: short, concrete, no clickbait. Format like "Day ${dayNumber} — <what today is>".
